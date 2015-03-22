@@ -1,8 +1,11 @@
 package main
 
 import (
+	crand "crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"log"
+	"math/rand"
 	"mime"
 	"os"
 	"path/filepath"
@@ -18,6 +21,12 @@ var (
 	p = fmt.Printf
 )
 
+func init() {
+	var seed int64
+	binary.Read(crand.Reader, binary.LittleEndian, &seed)
+	rand.Seed(seed)
+}
+
 func main() {
 	root := "."
 	args := os.Args
@@ -32,15 +41,22 @@ func main() {
 	}
 
 	var newOnly bool
+	var random bool
 	for _, arg := range args {
 		switch arg {
 		case "new":
 			newOnly = true
+		case "random":
+			random = true
 		}
 	}
 
 	var images []string
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			fmt.Printf("%s %v\n", path, err)
+			return nil
+		}
 		if info.IsDir() {
 			return nil
 		}
@@ -57,6 +73,12 @@ func main() {
 	}
 
 	sort.Sort(sort.Reverse(sort.StringSlice(images)))
+	if random {
+		for i := len(images) - 1; i >= 1; i-- {
+			j := rand.Intn(i + 1)
+			images[i], images[j] = images[j], images[i]
+		}
+	}
 
 	data := &struct {
 		Count map[string]int
@@ -83,6 +105,7 @@ func main() {
 	images = filtered
 
 	keys := make(chan rune)
+	var nextImage func()
 	g, err := lgtk.New(`
 GdkPixbuf = lgi.GdkPixbuf
 
@@ -93,6 +116,10 @@ win = Gtk.Window{
 		Gtk.Label{
 			id = 'filename',
 		},
+		Gtk.Button{
+			label = 'Next',
+			on_clicked = function() next_image() end,
+		},
 		Gtk.ScrolledWindow{
 			id = 'scroll',
 			Gtk.Image{
@@ -100,6 +127,10 @@ win = Gtk.Window{
 				expand = true,
 			},
 			expand = true,
+		},
+		Gtk.Button{
+			label = 'Next',
+			on_clicked = function() next_image() end,
 		},
 	},
 }
@@ -116,6 +147,9 @@ win:show_all()
 			case keys <- k:
 			default:
 			}
+		},
+		"next_image", func() {
+			nextImage()
 		})
 	if err != nil {
 		log.Fatal(err)
@@ -135,18 +169,22 @@ win.child.filename:set_label(F)
 	}
 	showImage()
 
+	nextImage = func() {
+		if index == len(images)-1 {
+			return
+		}
+		data.Count[images[index]]++
+		index++
+		showImage()
+	}
+
 loop:
 	for key := range keys {
 		switch key {
 		case 'q':
 			break loop
 		case ' ':
-			if index == len(images)-1 {
-				continue loop
-			}
-			data.Count[images[index]]++
-			index++
-			showImage()
+			nextImage()
 			time.Sleep(time.Millisecond * 500)
 		case 'z':
 			if index == 0 {
